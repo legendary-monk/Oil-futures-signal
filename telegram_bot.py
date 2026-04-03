@@ -236,10 +236,26 @@ def send_telegram_message(message: str) -> bool:
 def send_signal(signal_result: Dict[str, Any]) -> bool:
     try:
         message = _format_message(signal_result)
-        return send_telegram_message(message)
+        # This splits your secret by the comma and sends to each person
+        chat_ids = config.TELEGRAM_CHAT_ID.split(',')
+        success = True
+        for chat_id in chat_ids:
+            # We temporarily swap the ID to send to each friend
+            url = TELEGRAM_API.format(token=config.TELEGRAM_TOKEN, method="sendMessage")
+            payload = {
+                'chat_id': chat_id.strip(),
+                'text': message,
+                'disable_web_page_preview': True,
+            }
+            res = requests.post(url, data=payload, timeout=config.REQUEST_TIMEOUT)
+            if not res.json().get('ok'):
+                success = False
+                logger.error(f"Failed to send to {chat_id}: {res.text}")
+        return success
     except Exception as e:
         logger.error("Failed to format/send signal: %s", e, exc_info=True)
         return False
+
 
 
 def send_error_alert(error_summary: str) -> bool:
