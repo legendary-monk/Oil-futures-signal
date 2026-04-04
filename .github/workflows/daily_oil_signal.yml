@@ -1,59 +1,59 @@
 name: Daily Oil Signal
 
-on:
+"on":
   schedule:
-    # [span_1](start_span)4:00 AM UTC = 9:30 AM IST (Monday–Friday)[span_1](end_span)
-    - cron: '0 4 * * 1-5'
+    # 4:00 AM UTC = 9:30 AM IST, well after Asian/European markets open
+    # Oil markets trade 23 hours/day - data available at this time
+    - cron: '0 4 * * 1-5'   # Monday-Friday only
   
-  [span_2](start_span)workflow_dispatch:  # Allows manual trigger button in GitHub Actions tab[span_2](end_span)
+  workflow_dispatch: {}  # Manual trigger button on GitHub
 
 jobs:
   oil-signal:
     runs-on: ubuntu-latest
-    [span_3](start_span)timeout-minutes: 10  # Prevents hung processes from consuming minutes[span_3](end_span)
+    timeout-minutes: 10  # Kill if hung (mobile API failures can hang)
 
     steps:
       - name: Checkout code
-        [span_4](start_span)uses: actions/checkout@v4[span_4](end_span)
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
-          [span_5](start_span)python-version: '3.11'[span_5](end_span)
+          python-version: '3.11'
 
       - name: Cache pip packages
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          [span_6](start_span)key: ${{ runner.os }}-pip-oil-${{ hashFiles('requirements.txt') }}[span_6](end_span)
+          key: ${{ runner.os }}-pip-oil-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            [span_7](start_span)${{ runner.os }}-pip-oil-[span_7](end_span)
+            ${{ runner.os }}-pip-oil-
 
       - name: Install dependencies
         run: |
-          [span_8](start_span)python -m pip install --upgrade pip[span_8](end_span)
-          [span_9](start_span)pip install feedparser yfinance requests textblob pandas numpy[span_9](end_span)
-          [span_10](start_span)python -m textblob.download_corpora[span_10](end_span)
+          pip install --upgrade pip
+          pip install feedparser yfinance requests textblob pandas numpy
+          python -m textblob.download_corpora
 
       - name: Run oil signal pipeline
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        [span_11](start_span)run: python main.py run[span_11](end_span)
+        run: python main.py run
 
       - name: Commit predictions back to repo
-        [span_12](start_span)uses: stefanzweifel/git-auto-commit-action@v5[span_12](end_span)
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Auto: update oil_predictions.csv"
-          [span_13](start_span)file_pattern: "oil_predictions.csv polymarket_cache.json"[span_13](end_span)
-        [span_14](start_span)continue-on-error: true  # Pipeline continues even if commit fails[span_14](end_span)
+          file_pattern: "oil_predictions.csv polymarket_cache.json"
+        continue-on-error: true  # Don't fail pipeline if commit fails
 
       - name: Upload logs as artifact
-        [span_15](start_span)uses: actions/upload-artifact@v3[span_15](end_span)
+        uses: actions/upload-artifact@v3
         if: always()
         with:
-          [span_16](start_span)name: oil-signal-logs-${{ github.run_number }}[span_16](end_span)
+          name: oil-signal-logs-${{ github.run_number }}
           path: oil_signal.log
-          [span_17](start_span)if-no-files-found: ignore[span_17](end_span)
-          [span_18](start_span)retention-days: 7[span_18](end_span)
-          
+          if-no-files-found: ignore
+          retention-days: 7
