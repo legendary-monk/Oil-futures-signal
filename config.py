@@ -121,6 +121,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "oil_signal.log")
 PREDICTIONS_FILE = os.path.join(BASE_DIR, "oil_predictions.csv")
 POLYMARKET_CACHE_FILE = os.path.join(BASE_DIR, "polymarket_cache.json")
+OPEC_CALENDAR_FILE = os.path.join(BASE_DIR, "data", "opec_calendar.json")
 
 # ─────────────────────────────────────────────
 # LOGGING

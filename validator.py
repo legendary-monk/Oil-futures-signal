@@ -16,6 +16,9 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
+import pandas as pd
+import yfinance as yf
+
 import config
 from logger import get_logger
 
@@ -114,69 +117,97 @@ def _evaluate_outcome(signal: str, change_pct: float) -> str:
     return 'UNKNOWN'
 
 
+def _shift_business_days(start_date, offset: int):
+    """Returns date shifted by N business days using pandas business-day calendar."""
+    ts = pd.Timestamp(start_date)
+    shifted = ts + pd.tseries.offsets.BDay(offset)
+    return shifted.date()
+
+
+def _fetch_wti_close_for_date(target_date) -> Optional[float]:
+    """Fetches WTI close for a target date (or nearest previous market close)."""
+    try:
+        end = pd.Timestamp(target_date) + pd.Timedelta(days=2)
+        start = pd.Timestamp(target_date) - pd.Timedelta(days=7)
+        hist = yf.Ticker(config.WTI_TICKER).history(
+            start=start.strftime('%Y-%m-%d'),
+            end=end.strftime('%Y-%m-%d'),
+            auto_adjust=True,
+            actions=False,
+        )
+
+        if hist is None or hist.empty or 'Close' not in hist:
+            return None
+
+        hist.index = pd.to_datetime(hist.index).tz_localize(None)
+        target_ts = pd.Timestamp(target_date)
+
+        eligible = hist[hist.index <= target_ts]
+        if eligible.empty:
+            return None
+
+        return round(float(eligible['Close'].iloc[-1]), 2)
+    except Exception as e:
+        logger.warning("Unable to fetch WTI close for %s: %s", target_date, e)
+        return None
+
+
+def _resolve_single_outcome(pred: Dict[str, str], horizon: int, baseline_wti: float) -> bool:
+    field_map = {
+        1: ('wti_next1', 'change_pct_1d', 'outcome_1d'),
+        3: ('wti_next3', 'change_pct_3d', 'outcome_3d'),
+        5: ('wti_next5', 'change_pct_5d', 'outcome_5d'),
+    }
+    wti_field, change_field, outcome_field = field_map[horizon]
+
+    if pred.get(outcome_field) != 'PENDING':
+        return False
+
+    try:
+        pred_date = datetime.strptime(pred.get('date', ''), '%Y-%m-%d').date()
+    except ValueError:
+        return False
+
+    signal = pred.get('signal', 'NEUTRAL')
+    target_date = _shift_business_days(pred_date, horizon)
+    target_close = _fetch_wti_close_for_date(target_date)
+
+    if target_close is None:
+        return False
+
+    change = ((target_close - baseline_wti) / baseline_wti) * 100
+    pred[wti_field] = round(target_close, 2)
+    pred[change_field] = round(change, 4)
+    pred[outcome_field] = _evaluate_outcome(signal, change)
+
+    logger.info(
+        "%sd outcome for %s (target=%s): signal=%s close=%.2f change=%+.2f%% → %s",
+        horizon,
+        pred.get('date', ''),
+        target_date,
+        signal,
+        target_close,
+        change,
+        pred[outcome_field],
+    )
+    return True
+
+
 def update_pending_outcomes(wti_today: Optional[float]) -> int:
-    """
-    Multi-timeframe outcome resolution.
-
-    For each PENDING row:
-    - If the row is 1 trading day old → try to fill 1d outcome
-    - If 3 days old → try to fill 3d outcome
-    - If 5 days old → try to fill 5d outcome
-
-    WHY multi-timeframe: Oil macro signals often take 3–5 days to
-    materialize. A 1-day accuracy test undersells the signal quality.
-    """
-    if wti_today is None:
-        logger.warning("Cannot update outcomes: no WTI price available")
-        return 0
-
+    """Resolve pending outcomes using historical closes for D+1 / D+3 / D+5."""
     predictions = _read_all()
     if not predictions:
         return 0
 
     updated = 0
-    today = datetime.now(UTC).date()
-
     for pred in predictions:
-        pred_date_str = pred.get('date', '')
-        if not pred_date_str:
-            continue
-
-        try:
-            pred_date = datetime.strptime(pred_date_str, '%Y-%m-%d').date()
-        except ValueError:
-            continue
-
-        age_days = (today - pred_date).days
-        signal = pred.get('signal', 'NEUTRAL')
         baseline_wti = _safe_float(pred.get('wti_price', ''))
-
         if baseline_wti == 0:
             continue
 
-        # 1-day outcome
-        if age_days >= 1 and pred.get('outcome_1d') == 'PENDING':
-            change = ((wti_today - baseline_wti) / baseline_wti) * 100
-            pred['wti_next1'] = round(wti_today, 2)
-            pred['change_pct_1d'] = round(change, 4)
-            pred['outcome_1d'] = _evaluate_outcome(signal, change)
-            updated += 1
-            logger.info("1d outcome for %s: signal=%s change=%+.2f%% → %s",
-                        pred_date_str, signal, change, pred['outcome_1d'])
-
-        # 3-day outcome (approximate — we don't have intermediate prices)
-        if age_days >= 3 and pred.get('outcome_3d') == 'PENDING':
-            change = ((wti_today - baseline_wti) / baseline_wti) * 100
-            pred['wti_next3'] = round(wti_today, 2)
-            pred['change_pct_3d'] = round(change, 4)
-            pred['outcome_3d'] = _evaluate_outcome(signal, change)
-
-        # 5-day outcome
-        if age_days >= 5 and pred.get('outcome_5d') == 'PENDING':
-            change = ((wti_today - baseline_wti) / baseline_wti) * 100
-            pred['wti_next5'] = round(wti_today, 2)
-            pred['change_pct_5d'] = round(change, 4)
-            pred['outcome_5d'] = _evaluate_outcome(signal, change)
+        for horizon in (1, 3, 5):
+            if _resolve_single_outcome(pred, horizon, baseline_wti):
+                updated += 1
 
     if updated > 0:
         _write_all(predictions)
