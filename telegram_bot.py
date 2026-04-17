@@ -186,10 +186,10 @@ def _format_message(r: Dict[str, Any]) -> str:
     return '\n'.join(lines)
 
 
-def send_telegram_message(message: str) -> bool:
+def send_telegram_message(message: str, chat_id: Optional[str] = None) -> bool:
     url = TELEGRAM_API.format(token=config.TELEGRAM_TOKEN, method="sendMessage")
     payload = {
-        'chat_id': config.TELEGRAM_CHAT_ID,
+        'chat_id': (chat_id or config.TELEGRAM_CHAT_ID).strip(),
         'text': message,
         'disable_web_page_preview': True,
     }
@@ -236,22 +236,29 @@ def send_telegram_message(message: str) -> bool:
 def send_signal(signal_result: Dict[str, Any]) -> bool:
     try:
         message = _format_message(signal_result)
-        # This splits your secret by the comma and sends to each person
-        chat_ids = config.TELEGRAM_CHAT_ID.split(',')
-        success = True
+        chat_ids = [cid.strip() for cid in config.TELEGRAM_CHAT_ID.split(',') if cid.strip()]
+
+        if not chat_ids:
+            logger.error("No Telegram chat IDs configured")
+            return False
+
+        sent_count = 0
+        failed_ids = []
+
         for chat_id in chat_ids:
-            # We temporarily swap the ID to send to each friend
-            url = TELEGRAM_API.format(token=config.TELEGRAM_TOKEN, method="sendMessage")
-            payload = {
-                'chat_id': chat_id.strip(),
-                'text': message,
-                'disable_web_page_preview': True,
-            }
-            res = requests.post(url, data=payload, timeout=config.REQUEST_TIMEOUT)
-            if not res.json().get('ok'):
-                success = False
-                logger.error(f"Failed to send to {chat_id}: {res.text}")
-        return success
+            ok = send_telegram_message(message, chat_id=chat_id)
+            if ok:
+                sent_count += 1
+            else:
+                failed_ids.append(chat_id)
+
+        if failed_ids:
+            logger.error("Telegram send incomplete: sent=%d failed=%d failed_ids=%s",
+                         sent_count, len(failed_ids), failed_ids)
+            return False
+
+        logger.info("Telegram send complete: sent=%d", sent_count)
+        return True
     except Exception as e:
         logger.error("Failed to format/send signal: %s", e, exc_info=True)
         return False

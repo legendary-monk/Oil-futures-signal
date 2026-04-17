@@ -9,10 +9,13 @@ Oil-specific improvements:
 5. Momentum with oil-specific normalization
 """
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, date
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import config
 from logger import get_logger
@@ -21,33 +24,52 @@ logger = get_logger(__name__)
 
 FeatureDict = Dict[str, Any]
 
-# Known 2026 OPEC+ meeting schedule (approximate — update yearly)
-# Source: opec.org press releases
-OPEC_MEETING_DATES_2026 = [
-    date(2026, 2, 3),
-    date(2026, 5, 28),
-    date(2026, 6, 1),
-    date(2026, 11, 26),
-]
+
+def _load_opec_meeting_dates() -> List[date]:
+    """Loads OPEC meeting dates for the current and next year from JSON config."""
+    path = Path(config.OPEC_CALENDAR_FILE)
+    if not path.exists():
+        logger.warning("OPEC calendar file missing: %s", path)
+        return []
+
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except Exception as e:
+        logger.error("Failed to read OPEC calendar file %s: %s", path, e)
+        return []
+
+    today = date.today()
+    years_to_use = {today.year, today.year + 1}
+    dates: List[date] = []
+
+    for year in years_to_use:
+        raw_dates = payload.get(str(year), []) if isinstance(payload, dict) else []
+        if not isinstance(raw_dates, list):
+            continue
+        for raw in raw_dates:
+            try:
+                dates.append(date.fromisoformat(raw))
+            except (TypeError, ValueError):
+                logger.warning("Invalid OPEC date %r in %s", raw, path)
+
+    dates = sorted(set(dates))
+    if not dates:
+        logger.info("No OPEC dates available for %s/%s in %s", today.year, today.year + 1, path)
+    return dates
 
 
 def _days_to_nearest_opec_meeting() -> Optional[int]:
     """
     Returns days until (or since) the nearest OPEC+ meeting.
     Negative = days since last meeting. Positive = days until next.
-
-    WHY: OPEC meetings create predictable volatility windows.
-    The week before a meeting, uncertainty is high. The day after,
-    the market reprices rapidly. This context matters for signal confidence.
     """
     today = date.today()
-    if not OPEC_MEETING_DATES_2026:
+    meeting_dates = _load_opec_meeting_dates()
+    if not meeting_dates:
         return None
 
-    differences = [(d - today).days for d in OPEC_MEETING_DATES_2026]
-    # Find the one closest to today
-    nearest = min(differences, key=abs)
-    return nearest
+    differences = [(d - today).days for d in meeting_dates]
+    return min(differences, key=abs)
 
 
 def _is_opec_uncertainty_window() -> bool:
