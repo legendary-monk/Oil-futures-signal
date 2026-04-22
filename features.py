@@ -19,6 +19,7 @@ from typing import Optional, Dict, Any, List
 
 import config
 from logger import get_logger
+from quant_stack import compute_quant_stack
 
 logger = get_logger(__name__)
 
@@ -339,6 +340,15 @@ def compute_features(instruments: Dict, macro_signal: float) -> FeatureDict:
     except Exception:
         pass
 
+    quant_score = 0.0
+    quant_diagnostics = {}
+    try:
+        quant = compute_quant_stack(instruments)
+        quant_score = quant.score
+        quant_diagnostics = quant.diagnostics
+    except Exception as e:
+        logger.error("Quant stack error: %s", e)
+
     features = {
         'trend_score': trend_score,
         'vol_score': vol_score,
@@ -358,6 +368,8 @@ def compute_features(instruments: Dict, macro_signal: float) -> FeatureDict:
         'price_5d': price_5d,
         'price_10d': price_10d,
         'data_rows': len(df),
+        'quant_score': quant_score,
+        'quant_diagnostics': quant_diagnostics,
     }
 
     logger.info(
@@ -375,7 +387,8 @@ def _empty_features(macro_signal: float = 0.0) -> FeatureDict:
         'atr_pct', 'volume_signal', 'latest_close', 'wti_price',
         'brent_price', 'brent_wti_spread', 'price_1d', 'price_5d', 'price_10d',
     ]} | {'macro_signal': macro_signal, 'opec_uncertainty': False,
-          'opec_days': None, 'data_rows': 0, 'vol_score': 0.0, 'rsi_signal': 0.0}
+          'opec_days': None, 'data_rows': 0, 'vol_score': 0.0, 'rsi_signal': 0.0,
+          'quant_score': 0.0, 'quant_diagnostics': {}}
 
 
 if __name__ == "__main__":
