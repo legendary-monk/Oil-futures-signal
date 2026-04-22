@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 FeatureDict = Dict[str, Any]
 
 
-def _load_opec_meeting_dates() -> List[date]:
+def _load_opec_meeting_dates(as_of_date: Optional[date] = None) -> List[date]:
     """Loads OPEC meeting dates for the current and next year from JSON config."""
     path = Path(config.OPEC_CALENDAR_FILE)
     if not path.exists():
@@ -39,7 +39,7 @@ def _load_opec_meeting_dates() -> List[date]:
         logger.error("Failed to read OPEC calendar file %s: %s", path, e)
         return []
 
-    today = date.today()
+    today = as_of_date or date.today()
     years_to_use = {today.year, today.year + 1}
     dates: List[date] = []
 
@@ -59,13 +59,13 @@ def _load_opec_meeting_dates() -> List[date]:
     return dates
 
 
-def _days_to_nearest_opec_meeting() -> Optional[int]:
+def _days_to_nearest_opec_meeting(as_of_date: Optional[date] = None) -> Optional[int]:
     """
     Returns days until (or since) the nearest OPEC+ meeting.
     Negative = days since last meeting. Positive = days until next.
     """
-    today = date.today()
-    meeting_dates = _load_opec_meeting_dates()
+    today = as_of_date or date.today()
+    meeting_dates = _load_opec_meeting_dates(as_of_date=today)
     if not meeting_dates:
         return None
 
@@ -73,9 +73,9 @@ def _days_to_nearest_opec_meeting() -> Optional[int]:
     return min(differences, key=abs)
 
 
-def _is_opec_uncertainty_window() -> bool:
+def _is_opec_uncertainty_window(as_of_date: Optional[date] = None) -> bool:
     """Returns True if we're within OPEC_MEETING_UNCERTAINTY_DAYS of a meeting."""
-    days = _days_to_nearest_opec_meeting()
+    days = _days_to_nearest_opec_meeting(as_of_date=as_of_date)
     if days is None:
         return False
     return abs(days) <= config.OPEC_MEETING_UNCERTAINTY_DAYS
@@ -257,7 +257,7 @@ def _compute_volume_trend(df: pd.DataFrame) -> Optional[float]:
         return None
 
 
-def compute_features(instruments: Dict, macro_signal: float) -> FeatureDict:
+def compute_features(instruments: Dict, macro_signal: float, as_of_date: Optional[date] = None) -> FeatureDict:
     """
     Main entry point. Computes all oil market features.
 
@@ -316,8 +316,8 @@ def compute_features(instruments: Dict, macro_signal: float) -> FeatureDict:
 
     # OPEC meeting context
     try:
-        opec_days = _days_to_nearest_opec_meeting()
-        opec_uncertainty = _is_opec_uncertainty_window()
+        opec_days = _days_to_nearest_opec_meeting(as_of_date=as_of_date)
+        opec_uncertainty = _is_opec_uncertainty_window(as_of_date=as_of_date)
     except Exception:
         opec_days = None
         opec_uncertainty = False

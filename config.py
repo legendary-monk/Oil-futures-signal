@@ -124,6 +124,14 @@ HIGH_VOLATILITY_MULTIPLIER = 1.4
 OPEC_MEETING_UNCERTAINTY_DAYS = 7
 
 # ─────────────────────────────────────────────
+# BACKTEST CONFIGURATION
+# ─────────────────────────────────────────────
+BACKTEST_START_DATE = "2022-01-01"
+BACKTEST_END_DATE = None  # None -> today
+BACKTEST_WARMUP_BARS = 80
+BACKTEST_TX_COST_BPS = 3.0
+
+# ─────────────────────────────────────────────
 # FILE PATHS
 # ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

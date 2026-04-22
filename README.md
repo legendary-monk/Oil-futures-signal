@@ -88,6 +88,15 @@ python main.py test
 python main.py performance
 ```
 
+### Walk-forward backtest (next-day)
+
+```bash
+python main.py backtest
+```
+
+Outputs `backtest_results.csv` with daily signal, position, realized next-day WTI return,
+strategy return (after transaction cost), turnover, and confidence.
+
 ---
 
 ## Outputs
