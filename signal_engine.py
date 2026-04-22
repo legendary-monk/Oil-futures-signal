@@ -40,7 +40,7 @@ def _compute_raw_score(
     polymarket_score: float,
     sentiment_score: float,
     features: Dict[str, Any],
-) -> float:
+) -> tuple[float, Dict[str, float], int]:
     """
     Computes the weighted composite score from all four factors.
 
@@ -49,9 +49,9 @@ def _compute_raw_score(
     """
     trend = _safe(features.get('trend_score'))
     rsi_signal = _safe(features.get('rsi_signal'))
-    vol_score = _safe(features.get('vol_score'))
     volume_signal = _safe(features.get('volume_signal'))
     macro = _safe(features.get('macro_signal'))
+    quant = _safe(features.get('quant_score'))
 
     # Technical sub-score
     technical = (
@@ -66,23 +66,50 @@ def _compute_raw_score(
     )
     technical *= vol_modifier
 
-    raw = (
-        config.WEIGHT_POLYMARKET * polymarket_score +
-        config.WEIGHT_SENTIMENT * sentiment_score +
-        config.WEIGHT_TREND * technical +
-        config.WEIGHT_MACRO * macro
-    )
+    factor_scores = {
+        'polymarket': polymarket_score,
+        'sentiment': sentiment_score,
+        'technical': technical,
+        'macro': macro,
+        'quant': quant,
+    }
+    active_weights = {
+        'polymarket': config.WEIGHT_POLYMARKET if abs(polymarket_score) > 0.0001 else 0.0,
+        'sentiment': config.WEIGHT_SENTIMENT if abs(sentiment_score) > 0.0001 else 0.0,
+        'technical': config.WEIGHT_TREND if features.get('trend_score') is not None else 0.0,
+        'macro': config.WEIGHT_MACRO if features.get('macro_signal') is not None else 0.0,
+        'quant': config.WEIGHT_QUANT if features.get('quant_score') is not None else 0.0,
+    }
+    active_weight_sum = sum(active_weights.values())
+    if active_weight_sum == 0:
+        raw = 0.0
+        participation = 0
+    else:
+        normalized_weights = {k: v / active_weight_sum for k, v in active_weights.items()}
+        raw = sum(factor_scores[k] * normalized_weights[k] for k in factor_scores)
+        participation = sum(1 for w in active_weights.values() if w > 0)
+
+    # Consensus overlay: reward broad agreement, punish conflict.
+    active_scores = [v for k, v in factor_scores.items() if active_weights.get(k, 0) > 0 and abs(v) >= 0.12]
+    bulls = sum(1 for v in active_scores if v > 0)
+    bears = sum(1 for v in active_scores if v < 0)
+    if max(bulls, bears) >= 3:
+        raw *= config.CONSENSUS_BOOST_STRONG
+    elif bulls > 0 and bears > 0:
+        raw *= config.CONSENSUS_DAMPEN_MIXED
 
     logger.debug(
-        "Raw score: poly=%.4f×%.2f + sent=%.4f×%.2f + tech=%.4f×%.2f + macro=%.4f×%.2f = %.4f",
-        polymarket_score, config.WEIGHT_POLYMARKET,
-        sentiment_score, config.WEIGHT_SENTIMENT,
-        technical, config.WEIGHT_TREND,
-        macro, config.WEIGHT_MACRO,
+        "Raw score: poly=%.4f sent=%.4f tech=%.4f macro=%.4f quant=%.4f | participation=%d => %.4f",
+        polymarket_score,
+        sentiment_score,
+        technical,
+        macro,
+        quant,
+        participation,
         raw
     )
 
-    return round(max(-1.0, min(1.0, raw)), 4)
+    return round(max(-1.0, min(1.0, raw)), 4), factor_scores, participation
 
 
 def _classify(normalized: float) -> str:
@@ -100,6 +127,8 @@ def _compute_confidence(
     has_sentiment: bool,
     has_market: bool,
     opec_uncertainty: bool,
+    consensus_strength: float,
+    participation: int,
 ) -> float:
     """
     Confidence with oil-specific penalty structure.
@@ -125,8 +154,29 @@ def _compute_confidence(
         logger.warning("Confidence -30%: OPEC meeting within %d days",
                        config.OPEC_MEETING_UNCERTAINTY_DAYS)
 
-    conf = max(0.05, min(0.90, base * penalty))
+    participation_penalty = 1.0
+    if participation < config.MIN_FACTOR_PARTICIPATION:
+        participation_penalty = 0.65
+    elif participation == 2:
+        participation_penalty = 0.82
+
+    consensus_boost = 0.85 + (0.30 * max(0.0, min(1.0, consensus_strength)))
+    conf = max(0.05, min(0.90, base * penalty * participation_penalty * consensus_boost))
     return round(conf, 4)
+
+
+def _consensus_strength(factor_scores: Dict[str, float]) -> float:
+    active = [v for v in factor_scores.values() if abs(v) >= 0.12]
+    if len(active) < 2:
+        return 0.0
+    same_sign_pairs = 0
+    total_pairs = 0
+    for i in range(len(active)):
+        for j in range(i + 1, len(active)):
+            total_pairs += 1
+            if active[i] * active[j] > 0:
+                same_sign_pairs += 1
+    return round(same_sign_pairs / total_pairs if total_pairs else 0.0, 4)
 
 
 def _build_reasoning(
@@ -210,6 +260,20 @@ def _build_reasoning(
     elif vol == "LOW":
         reasons.append("Volatility is low — price action in steady trending regime")
 
+    quant_score = features.get('quant_score')
+    if isinstance(quant_score, (int, float)):
+        if quant_score > 0.2:
+            reasons.append("Quant stack is bullish across carry/regime/risk/ML layers")
+        elif quant_score < -0.2:
+            reasons.append("Quant stack is bearish across carry/regime/risk/ML layers")
+
+    consensus = features.get('consensus_strength')
+    if isinstance(consensus, (int, float)):
+        if consensus >= 0.66:
+            reasons.append("Model factors are strongly aligned (high cross-factor consensus)")
+        elif consensus <= 0.34:
+            reasons.append("Model factors disagree materially (mixed regime, lower conviction)")
+
     return reasons
 
 
@@ -241,12 +305,17 @@ def generate_signal(
     opec_uncertainty = features.get('opec_uncertainty', False)
 
     try:
-        raw_score = _compute_raw_score(polymarket_score, sentiment_score, features)
+        raw_score, factor_scores, participation = _compute_raw_score(polymarket_score, sentiment_score, features)
+        if abs(raw_score) < config.MIN_DIRECTIONAL_SCORE:
+            raw_score = 0.0
         normalized = (raw_score + 1) / 2
         signal = _classify(normalized)
+        consensus_strength = _consensus_strength(factor_scores)
+        features['consensus_strength'] = consensus_strength
         confidence = _compute_confidence(
             raw_score, normalized,
-            has_polymarket, has_sentiment, has_market, opec_uncertainty
+            has_polymarket, has_sentiment, has_market, opec_uncertainty,
+            consensus_strength, participation
         )
         reasons = _build_reasoning(
             signal, polymarket_score, sentiment_score, features, polymarket_markets
@@ -274,6 +343,7 @@ def generate_signal(
             'sentiment_score': round(sentiment_score, 4),
             'trend_score': features.get('trend_score'),
             'macro_signal': features.get('macro_signal'),
+            'quant_score': features.get('quant_score'),
 
             # Market context
             'vol_regime': features.get('vol_regime'),
@@ -306,6 +376,9 @@ def generate_signal(
                 'has_sentiment': has_sentiment,
                 'has_market': has_market,
                 'opec_uncertainty': opec_uncertainty,
+                'factor_participation': participation,
+                'consensus_strength': consensus_strength,
+                'quant_score': features.get('quant_score'),
             }
         }
 
@@ -315,7 +388,7 @@ def generate_signal(
             'signal': 'NEUTRAL', 'confidence': 0.05, 'confidence_pct': 5.0,
             'raw_score': 0.0, 'normalized_score': 0.5,
             'polymarket_score': polymarket_score, 'sentiment_score': sentiment_score,
-            'trend_score': None, 'macro_signal': None,
+            'trend_score': None, 'macro_signal': None, 'quant_score': 0.0,
             'vol_regime': None, 'rsi': None, 'atr_pct': None,
             'wti_price': None, 'brent_price': None, 'brent_wti_spread': None,
             'price_1d': None, 'price_5d': None, 'price_10d': None,

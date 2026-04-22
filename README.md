@@ -6,6 +6,8 @@ A Python pipeline that produces a **daily directional oil signal** (`BULLISH`, `
 2. Polymarket prediction-market probabilities
 3. Oil-focused RSS news sentiment
 4. Technical and macro feature engineering
+5. Consensus-aware score fusion (confidence rises only when factors align)
+6. Multi-model quant stack spanning no-arbitrage, stochastic, term-structure, risk, and ML math
 
 The output is sent to Telegram and logged for performance tracking in CSV.
 
@@ -86,6 +88,15 @@ python main.py test
 python main.py performance
 ```
 
+### Walk-forward backtest (next-day)
+
+```bash
+python main.py backtest
+```
+
+Outputs `backtest_results.csv` with daily signal, position, realized next-day WTI return,
+strategy return (after transaction cost), turnover, and confidence.
+
 ---
 
 ## Outputs
@@ -100,6 +111,34 @@ A single signal includes fields like:
 - factor scores (`polymarket_score`, `sentiment_score`, `trend_score`, `macro_signal`)
 - price context (`wti_price`, `brent_price`, `brent_wti_spread`)
 - feature context (`vol_regime`, `rsi`, `atr_pct`, `opec_uncertainty`)
+- model quality context (`factor_participation`, `consensus_strength`)
+- quant context (`quant_score`, `quant_diagnostics`)
+
+---
+
+## What was refined for stronger institutional use
+
+The engine now includes a **consensus overlay**:
+
+- factors are dynamically re-normalized when one source is missing
+- high agreement across factors boosts conviction
+- mixed/disagreeing regimes are automatically damped toward neutral
+- low absolute score regimes are filtered to avoid over-trading noise
+
+This keeps the system entirely free (Yahoo/Polymarket/RSS + local Python) while
+improving reliability and reducing false directional calls.
+
+It also includes `quant_stack.py`, which computes a no-cost institutional quant layer
+covering:
+- cost-of-carry + convenience yield + storage-arbitrage bounds + ACT/360
+- GBM, OU, Schwartz-family proxies, jump/Levy proxies, and seasonality
+- forward/curve interpolation proxies, PCA, cointegration/VECM/state-space/Kalman
+- ARIMA/SARIMA/GARCH/EGARCH/regime/Hurst/Bayesian/EVT
+- crack/spark/dark spread proxies + copula tail dependence
+- LP/Bellman/HJB/Almgren-Chriss/Kelly proxies
+- Black-76 Greeks + VaR/CVaR/stress/liquidity-adjusted risk
+- microstructure proxies (queue, Kyle lambda, Roll, IV surface proxies)
+- ridge/lasso/boosting/random-forest/neural-SDE/Q-learning proxies
 
 ---
 
