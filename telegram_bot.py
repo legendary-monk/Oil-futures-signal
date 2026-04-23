@@ -1,12 +1,11 @@
 """
 telegram_bot.py — Oil Signal Telegram Output
 =============================================
-Enhanced message format:
-- Four-factor score breakdown (unique to oil system)
-- Polymarket top markets displayed directly in message
-- Brent/WTI price comparison
-- ATR-based risk context
-- OPEC meeting warnings
+Optimized message format:
+- compact "trade card" at top for fast decisioning
+- scorecard with major factors + quant + consensus quality
+- concise risk and data-quality warnings
+- keeps payload comfortably below Telegram hard limits
 """
 
 import requests
@@ -47,6 +46,31 @@ def _factor_bar(score: float) -> str:
     return f"[{bar}] {sign}{score:.2f}"
 
 
+def _position_hint(conf_pct: float, vol_regime: Optional[str], quant_score: float) -> str:
+    """
+    Human-readable sizing guidance (not execution advice).
+    """
+    base = 0.25 if conf_pct < 45 else (0.50 if conf_pct < 65 else 0.75)
+    if vol_regime == "HIGH":
+        base *= 0.65
+    elif vol_regime == "LOW":
+        base *= 1.10
+
+    if quant_score > 0.25:
+        base *= 1.10
+    elif quant_score < -0.25:
+        base *= 0.95
+
+    pct = int(round(max(10, min(100, base * 100))))
+    return f"{pct}% of normal risk budget"
+
+
+def _shorten(text: str, n: int = 72) -> str:
+    if len(text) <= n:
+        return text
+    return text[:n - 1].rstrip() + "…"
+
+
 def _format_message(r: Dict[str, Any]) -> str:
     """Formats the full signal result into a Telegram message."""
     now_utc = datetime.now(UTC)
@@ -71,6 +95,7 @@ def _format_message(r: Dict[str, Any]) -> str:
     sent_score = r.get('sentiment_score', 0)
     trend_score = r.get('trend_score')
     macro_score = r.get('macro_signal', 0)
+    quant_score = r.get('quant_score', 0.0)
 
     poly_markets = r.get('polymarket_markets', [])
     n_poly = r.get('polymarket_market_count', 0)
@@ -82,35 +107,38 @@ def _format_message(r: Dict[str, Any]) -> str:
     opec_flag = r.get('opec_uncertainty', False)
     reasons = r.get('reasons', [])
     dq = r.get('data_quality', {})
+    participation = dq.get('factor_participation')
+    consensus = dq.get('consensus_strength')
 
     lines = []
 
     # ── Header ──
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🛢  OIL MARKET SIGNAL")
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("🛢 <OIL SIGNAL CARD>")
     lines.append(f"🕐 {time_str}")
-    lines.append("")
 
     # ── Main Signal ──
-    lines.append(f"{emoji}  Signal:  {signal}")
-    lines.append(f"📶  Confidence: {conf_pct:.1f}%")
-    lines.append(f"    [{bar}]")
+    lines.append(f"{emoji} Signal: {signal} | Confidence: {conf_pct:.1f}% [{bar}]")
+    lines.append(f"🎯 Risk budget hint: {_position_hint(conf_pct, vol, quant_score)}")
     if opec_flag:
-        lines.append(f"⚠️  OPEC meeting in {opec_days if opec_days and opec_days >= 0 else abs(opec_days or 0)} days — uncertainty elevated")
-    lines.append("")
+        lines.append(f"⚠️ OPEC event window: {opec_days if opec_days and opec_days >= 0 else abs(opec_days or 0)} day(s)")
 
-    # ── Four-Factor Breakdown ──
-    lines.append("📊 FACTOR SCORES  (−1 bearish ↔ +1 bullish)")
+    # ── Factor Breakdown ──
+    lines.append("")
+    lines.append("📊 Scorecard (−1 bearish ↔ +1 bullish)")
     lines.append(f"  🎲 Polymarket: {_factor_bar(poly_score)}")
     lines.append(f"  📰 News Sent:  {_factor_bar(sent_score)}")
     if trend_score is not None:
         lines.append(f"  📈 Tech Trend: {_factor_bar(trend_score)}")
     lines.append(f"  🌐 Macro:      {_factor_bar(macro_score)}")
-    lines.append("")
+    lines.append(f"  🧠 Quant:      {_factor_bar(quant_score)}")
+    if participation is not None:
+        lines.append(f"  🧩 Participation: {participation}/5")
+    if consensus is not None:
+        lines.append(f"  🤝 Consensus: {consensus:.2f}")
 
     # ── Price Data ──
     if wti or brent:
+        lines.append("")
         lines.append("💲 CRUDE PRICES")
         if wti:
             sign = f"{_change_arrow(p1d)}"
@@ -125,10 +153,10 @@ def _format_message(r: Dict[str, Any]) -> str:
             lines.append(f"  5-day change:  {p5d:+.2f}%  {_change_arrow(p5d)}")
         if p10d is not None:
             lines.append(f"  10-day change: {p10d:+.2f}%")
-        lines.append("")
 
     # ── Technical Context ──
     if vol != 'N/A' or rsi or atr:
+        lines.append("")
         lines.append("⚙️ TECHNICALS")
         vol_map = {'HIGH': '⚡ High', 'NORMAL': '〜 Normal', 'LOW': '🧘 Low'}
         if vol and vol != 'N/A':
@@ -138,35 +166,34 @@ def _format_message(r: Dict[str, Any]) -> str:
         if rsi:
             note = " (Overbought ⚠️)" if rsi > 70 else (" (Oversold ⚠️)" if rsi < 30 else "")
             lines.append(f"  RSI(14): {rsi:.1f}{note}")
-        lines.append("")
 
     # ── Polymarket Markets ──
     if poly_markets:
+        lines.append("")
         lines.append(f"🎲 PREDICTION MARKETS ({n_poly} active)")
         for m in poly_markets[:3]:
             d_emoji = "🟢" if m['direction'] == 'BULLISH' else "🔴"
             lines.append(
                 f"  {d_emoji} YES={m['yes_prob']:.0%} | ${m['volume_usd']:,.0f} | "
-                f"{m['title'][:45]}"
+                f"{_shorten(m['title'], 45)}"
             )
-        lines.append("")
     elif not dq.get('has_polymarket'):
-        lines.append("🎲 Prediction markets: no oil markets active")
         lines.append("")
+        lines.append("🎲 Prediction markets: no oil markets active")
 
     # ── News Sentiment ──
     if dq.get('has_sentiment'):
+        lines.append("")
         lines.append(f"📰 NEWS ({articles} articles)")
         lines.append(f"  Positive: {pos_arts}  |  Negative: {neg_arts}")
         lines.append(f"  Net sentiment: {sent_score:+.3f}")
-        lines.append("")
 
     # ── Reasoning ──
     if reasons:
-        lines.append("🔍 KEY FACTORS")
-        for r_text in reasons[:6]:
-            lines.append(f"  • {r_text}")
         lines.append("")
+        lines.append("🔍 KEY FACTORS")
+        for r_text in reasons[:4]:
+            lines.append(f"  • {r_text}")
 
     # ── Data Quality ──
     missing = []
@@ -174,14 +201,12 @@ def _format_message(r: Dict[str, Any]) -> str:
     if not dq.get('has_market'): missing.append("price data")
     if not dq.get('has_sentiment'): missing.append("news")
     if missing:
-        lines.append(f"⚠️  Missing data: {', '.join(missing)} — reliability reduced")
         lines.append("")
+        lines.append(f"⚠️  Missing data: {', '.join(missing)} — reliability reduced")
 
     # ── Disclaimer ──
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("⚠️  NOT trading advice.")
-    lines.append("    Oil is extremely volatile. Risk accordingly.")
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("")
+    lines.append("⚠️ Research signal only — not trading advice.")
 
     return '\n'.join(lines)
 
