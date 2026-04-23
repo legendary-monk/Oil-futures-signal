@@ -29,6 +29,7 @@ try:
     from signal_engine import generate_signal
     from telegram_bot import send_signal, send_error_alert, test_connection
     from validator import save_prediction, update_pending_outcomes, compute_performance_metrics, print_performance_report
+    from backtest import run_backtest, print_backtest_report
 except ImportError as e:
     print(f"\n[FATAL] Import failed: {e}")
     print("Install: pip install feedparser yfinance requests textblob pandas numpy")
@@ -192,6 +193,16 @@ if __name__ == "__main__":
     elif mode == 'performance':
         print_performance_report()
 
+    elif mode == 'backtest':
+        try:
+            result = run_backtest()
+            print_backtest_report(result)
+        except Exception as e:
+            logger.error("Backtest failed: %s", e, exc_info=True)
+            print(f"\n⚠️ Backtest failed: {e}")
+            print("   Check network access to Yahoo Finance or adjust date range/config.")
+            sys.exit(1)
+
     elif mode == 'run':
         try:
             success = run_pipeline()
@@ -209,5 +220,5 @@ if __name__ == "__main__":
 
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: python main.py [run|test|performance]")
+        print("Usage: python main.py [run|test|performance|backtest]")
         sys.exit(1)

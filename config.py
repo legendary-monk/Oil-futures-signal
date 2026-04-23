@@ -94,10 +94,19 @@ MAX_ARTICLE_AGE_HOURS = 36 # WHY 36: OPEC decisions affect oil for 2+ days
 # News sentiment is noisier for oil than equities.
 # Technical trend matters but oil is more macro-driven than equity indices.
 # ─────────────────────────────────────────────
-WEIGHT_POLYMARKET = 0.35    # Prediction market probabilities
-WEIGHT_SENTIMENT = 0.25     # News sentiment
-WEIGHT_TREND = 0.25         # Technical price trend
-WEIGHT_MACRO = 0.15         # USD / correlated instruments
+WEIGHT_POLYMARKET = 0.30    # Prediction market probabilities
+WEIGHT_SENTIMENT = 0.20     # News sentiment
+WEIGHT_TREND = 0.20         # Technical price trend
+WEIGHT_MACRO = 0.10         # USD / correlated instruments
+WEIGHT_QUANT = 0.20         # Comprehensive quant stack
+
+# Adaptive consensus overlay (still fully free/local).
+# The engine boosts conviction only when multiple factors agree and
+# dampens in disagreement regimes to reduce false positives.
+CONSENSUS_BOOST_STRONG = 1.15   # 3+ aligned factors
+CONSENSUS_DAMPEN_MIXED = 0.85   # 2v2 split / noisy regime
+MIN_DIRECTIONAL_SCORE = 0.18    # below this, force NEUTRAL
+MIN_FACTOR_PARTICIPATION = 2    # require at least 2 active factors
 
 # Signal classification thresholds
 BULLISH_THRESHOLD = 0.60
@@ -113,6 +122,14 @@ HIGH_VOLATILITY_MULTIPLIER = 1.4
 # Oil-specific: OPEC meeting schedule detection
 # If today is within N days of a scheduled OPEC meeting, flag elevated uncertainty
 OPEC_MEETING_UNCERTAINTY_DAYS = 7
+
+# ─────────────────────────────────────────────
+# BACKTEST CONFIGURATION
+# ─────────────────────────────────────────────
+BACKTEST_START_DATE = "2022-01-01"
+BACKTEST_END_DATE = None  # None -> today
+BACKTEST_WARMUP_BARS = 80
+BACKTEST_TX_COST_BPS = 3.0
 
 # ─────────────────────────────────────────────
 # FILE PATHS
@@ -149,7 +166,7 @@ def validate_config():
     if TELEGRAM_CHAT_ID == "YOUR_CHAT_ID_HERE":
         errors.append("TELEGRAM_CHAT_ID not set")
 
-    total_weight = WEIGHT_POLYMARKET + WEIGHT_SENTIMENT + WEIGHT_TREND + WEIGHT_MACRO
+    total_weight = WEIGHT_POLYMARKET + WEIGHT_SENTIMENT + WEIGHT_TREND + WEIGHT_MACRO + WEIGHT_QUANT
     if abs(total_weight - 1.0) > 0.01:
         errors.append(f"Weights sum to {total_weight:.2f}, must sum to 1.0")
 
