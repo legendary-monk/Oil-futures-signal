@@ -337,6 +337,7 @@ def generate_signal(
             'confidence_pct': round(confidence * 100, 1),
             'raw_score': raw_score,
             'normalized_score': round(normalized, 4),
+            'posterior_up': round(normalized, 4),
 
             # Factor scores
             'polymarket_score': round(polymarket_score, 4),
@@ -344,6 +345,11 @@ def generate_signal(
             'trend_score': features.get('trend_score'),
             'macro_signal': features.get('macro_signal'),
             'quant_score': features.get('quant_score'),
+            'recommended_weight': max(0.0, min(1.0, float(features.get('quant_diagnostics', {}).get('kelly_fractional', 0.0) or 0.0))),
+            'kelly_fractional': float(features.get('quant_diagnostics', {}).get('kelly_fractional', 0.0) or 0.0),
+            'regime_prob_high_vol': float(features.get('quant_diagnostics', {}).get('markov_regime_high_vol_prob', 0.0) or 0.0),
+            'garch_vol': float(features.get('quant_diagnostics', {}).get('garch_vol', 0.0) or 0.0),
+            'model_uncertainty': float(features.get('quant_diagnostics', {}).get('evt_tail_risk', 0.0) or 0.0),
 
             # Market context
             'vol_regime': features.get('vol_regime'),
@@ -351,6 +357,7 @@ def generate_signal(
             'atr_pct': features.get('atr_pct'),
             'wti_price': features.get('wti_price'),
             'brent_price': features.get('brent_price'),
+            'latest_close': features.get('latest_close'),
             'brent_wti_spread': features.get('brent_wti_spread'),
             'price_1d': features.get('price_1d'),
             'price_5d': features.get('price_5d'),

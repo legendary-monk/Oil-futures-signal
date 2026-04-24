@@ -11,6 +11,7 @@ Optimized message format:
 import requests
 import json
 from datetime import datetime, timezone, timedelta
+from math import log2
 from typing import Dict, Any, List, Optional
 
 import config
@@ -30,6 +31,58 @@ def _signal_emoji(signal: str) -> str:
 def _confidence_bar(pct: float) -> str:
     filled = round(pct / 10)
     return '▓' * filled + '░' * (10 - filled)
+
+
+def _safe_pct(value: Optional[float], scale: float = 100.0) -> float:
+    if value is None:
+        return 0.0
+    return float(value) * scale
+
+
+def _ist_time_str(r: Dict[str, Any]) -> str:
+    raw_ts = r.get('timestamp')
+    dt = None
+    if raw_ts:
+        try:
+            dt = datetime.fromisoformat(str(raw_ts).replace('Z', '+00:00'))
+        except ValueError:
+            dt = None
+    if dt is None:
+        dt = datetime.now(UTC)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    ist = dt.astimezone(timezone(UTC_PLUS_530))
+    return ist.strftime('%d %b %Y, %I:%M %p IST')
+
+
+def _regime_bundle(r: Dict[str, Any]) -> Dict[str, float | str]:
+    high_vol = r.get('regime_prob_high_vol')
+    if high_vol is None:
+        high_vol = r.get('model_risk', {}).get('regime_prob_high_vol', 0.0)
+    hv = min(1.0, max(0.0, float(high_vol or 0.0)))
+    diffusion = max(0.0, 1.0 - hv)
+    transition = min(diffusion, hv * 0.45)
+    stress = max(0.0, 1.0 - diffusion - transition)
+
+    if hv < 0.33:
+        regime = "LOW_VOL_DIFFUSION"
+    elif hv < 0.66:
+        regime = "TRANSITION"
+    else:
+        regime = "STRESS"
+
+    return {
+        'regime': regime,
+        'd': diffusion,
+        't': transition,
+        's': stress,
+    }
+
+
+def _entropy_from_mix(d: float, t: float, s: float) -> float:
+    probs = [max(1e-9, p) for p in (d, t, s)]
+    h = -sum(p * log2(p) for p in probs)
+    return h / log2(3)
 
 
 def _change_arrow(change: Optional[float]) -> str:
@@ -73,8 +126,7 @@ def _shorten(text: str, n: int = 72) -> str:
 
 def _format_message(r: Dict[str, Any]) -> str:
     """Formats the full signal result into a Telegram message."""
-    now_utc = datetime.now(UTC)
-    time_str = now_utc.strftime('%d %b %Y %H:%M UTC')
+    time_str = _ist_time_str(r)
 
     signal = r.get('signal', 'NEUTRAL')
     conf_pct = r.get('confidence_pct', 0)
@@ -110,103 +162,97 @@ def _format_message(r: Dict[str, Any]) -> str:
     participation = dq.get('factor_participation')
     consensus = dq.get('consensus_strength')
 
-    lines = []
+    posterior_up = _safe_pct(r.get('posterior_up', r.get('normalized_score', 0.5)))
+    long_only_weight = _safe_pct(r.get('recommended_weight', r.get('kelly_fractional', 0.0)))
+    if signal == 'BEARISH':
+        long_only_weight = 0.0
+    long_only_weight = max(0.0, min(100.0, long_only_weight))
 
-    # ── Header ──
-    lines.append("🛢 <OIL SIGNAL CARD>")
-    lines.append(f"🕐 {time_str}")
+    regime = _regime_bundle(r)
+    disagreement = (1.0 - float(consensus or 0.0)) if consensus is not None else 0.0
+    uncertainty = float(r.get('model_uncertainty', r.get('garch_vol', 0.0)) or 0.0)
+    uncertainty = max(0.0, min(1.0, uncertainty))
+    energy = max(0.0, min(2.0, 1.0 + float(quant_score or 0.0)))
+    entropy = _entropy_from_mix(regime['d'], regime['t'], regime['s'])
 
-    # ── Main Signal ──
-    lines.append(f"{emoji} Signal: {signal} | Confidence: {conf_pct:.1f}% [{bar}]")
-    lines.append(f"🎯 Risk budget hint: {_position_hint(conf_pct, vol, quant_score)}")
-    if opec_flag:
-        lines.append(f"⚠️ OPEC event window: {opec_days if opec_days and opec_days >= 0 else abs(opec_days or 0)} day(s)")
+    headline = "Bullish ✅" if sent_score > 0.08 else ("Bearish ❗" if sent_score < -0.08 else "Mixed 📰")
 
-    # ── Factor Breakdown ──
-    lines.append("")
-    lines.append("📊 Scorecard (−1 bearish ↔ +1 bullish)")
-    lines.append(f"  🎲 Polymarket: {_factor_bar(poly_score)}")
-    lines.append(f"  📰 News Sent:  {_factor_bar(sent_score)}")
-    if trend_score is not None:
-        lines.append(f"  📈 Tech Trend: {_factor_bar(trend_score)}")
-    lines.append(f"  🌐 Macro:      {_factor_bar(macro_score)}")
-    lines.append(f"  🧠 Quant:      {_factor_bar(quant_score)}")
-    if participation is not None:
-        lines.append(f"  🧩 Participation: {participation}/5")
-    if consensus is not None:
-        lines.append(f"  🤝 Consensus: {consensus:.2f}")
+    if rsi is not None:
+        rsi_note = " (Overbought ⚠️)" if rsi > 70 else (" (Oversold ⚠️)" if rsi < 30 else "")
+        rsi_line = f"   RSI(14): {rsi:.1f}{rsi_note}"
+    else:
+        rsi_line = "   RSI(14): N/A"
 
-    # ── Price Data ──
-    if wti or brent:
-        lines.append("")
-        lines.append("💲 CRUDE PRICES")
-        if wti:
-            sign = f"{_change_arrow(p1d)}"
-            lines.append(f"  WTI:   ${wti:,.2f}  {sign}")
-        if brent:
-            lines.append(f"  Brent: ${brent:,.2f}")
-        if spread is not None:
-            lines.append(f"  Brent-WTI spread: ${spread:.2f}")
-        if p1d is not None:
-            lines.append(f"  1-day change:  {p1d:+.2f}%")
-        if p5d is not None:
-            lines.append(f"  5-day change:  {p5d:+.2f}%  {_change_arrow(p5d)}")
-        if p10d is not None:
-            lines.append(f"  10-day change: {p10d:+.2f}%")
+    price_label = "NIFTY 50 DATA" if r.get('market_label') == 'NIFTY50' else "MARKET DATA"
+    close_price = r.get('close_price', r.get('latest_close', wti or brent))
 
-    # ── Technical Context ──
-    if vol != 'N/A' or rsi or atr:
-        lines.append("")
-        lines.append("⚙️ TECHNICALS")
-        vol_map = {'HIGH': '⚡ High', 'NORMAL': '〜 Normal', 'LOW': '🧘 Low'}
-        if vol and vol != 'N/A':
-            lines.append(f"  Volatility: {vol_map.get(vol, vol)}")
-        if atr:
-            lines.append(f"  ATR: {atr:.2f}% of price")
-        if rsi:
-            note = " (Overbought ⚠️)" if rsi > 70 else (" (Oversold ⚠️)" if rsi < 30 else "")
-            lines.append(f"  RSI(14): {rsi:.1f}{note}")
+    lines = [
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📊 MARKET SIGNAL REPORT",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"🕐 {time_str}",
+        "",
+        f"{emoji}  Signal:  {signal}",
+        f"📶  Confidence: {conf_pct:.1f}%",
+        f"🎯  Posterior P(up): {posterior_up:.1f}%",
+        f"     [{bar}]",
+        f"⚖️  Recommended Weight: {long_only_weight:.2f}%",
+        "",
+        "🧠 MODEL RISK",
+        f"   Regime: {regime['regime']}",
+        f"   Regime Mix: D {regime['d'] * 100:.1f}% | T {regime['t'] * 100:.1f}% | S {regime['s'] * 100:.1f}%",
+        f"   Disagreement: {disagreement:.3f}",
+        f"   Uncertainty: {uncertainty:.3f}",
+        f"   Energy / Entropy: {energy:.2f} / {entropy:.2f}",
+        "",
+        f"📈 {price_label}",
+        f"   Close: {close_price:,.2f}" if isinstance(close_price, (int, float)) else "   Close: N/A",
+        f"   1-Day: {p1d:+.2f}%  {_change_arrow(p1d)}" if p1d is not None else "   1-Day: N/A",
+        f"   5-Day: {p5d:+.2f}%  {_change_arrow(p5d)}" if p5d is not None else "   5-Day: N/A",
+        rsi_line,
+        "",
+        "📰 NEWS SENTIMENT",
+        f"   Overall: {headline}",
+        f"   Score: {sent_score:+.3f} (range: -1 to +1)",
+        f"   Articles: {articles} analyzed",
+        f"   Positive: {pos_arts} | Negative: {neg_arts}",
+    ]
 
-    # ── Polymarket Markets ──
-    if poly_markets:
-        lines.append("")
-        lines.append(f"🎲 PREDICTION MARKETS ({n_poly} active)")
-        for m in poly_markets[:3]:
-            d_emoji = "🟢" if m['direction'] == 'BULLISH' else "🔴"
-            lines.append(
-                f"  {d_emoji} YES={m['yes_prob']:.0%} | ${m['volume_usd']:,.0f} | "
-                f"{_shorten(m['title'], 45)}"
-            )
-    elif not dq.get('has_polymarket'):
-        lines.append("")
-        lines.append("🎲 Prediction markets: no oil markets active")
-
-    # ── News Sentiment ──
-    if dq.get('has_sentiment'):
-        lines.append("")
-        lines.append(f"📰 NEWS ({articles} articles)")
-        lines.append(f"  Positive: {pos_arts}  |  Negative: {neg_arts}")
-        lines.append(f"  Net sentiment: {sent_score:+.3f}")
-
-    # ── Reasoning ──
     if reasons:
-        lines.append("")
-        lines.append("🔍 KEY FACTORS")
+        lines.extend(["", "🔍 KEY FACTORS"])
         for r_text in reasons[:4]:
-            lines.append(f"  • {r_text}")
+            lines.append(f"   • {_shorten(r_text, 100)}")
 
-    # ── Data Quality ──
+    lines.extend([
+        "",
+        "🧭 SCENARIO PLAYBOOK",
+        "   • Base: keep suggested weight while shock/uncertainty stay contained.",
+        "   • Upside: trend persistence with low shock supports full risk budget.",
+    ])
+
     missing = []
-    if not dq.get('has_polymarket'): missing.append("Polymarket")
-    if not dq.get('has_market'): missing.append("price data")
-    if not dq.get('has_sentiment'): missing.append("news")
-    if missing:
+    if not dq.get('has_polymarket'):
+        missing.append("Polymarket")
+    if not dq.get('has_market'):
+        missing.append("price data")
+    if not dq.get('has_sentiment'):
+        missing.append("news")
+    if missing or opec_flag:
         lines.append("")
-        lines.append(f"⚠️  Missing data: {', '.join(missing)} — reliability reduced")
+        if missing:
+            lines.append(f"⚠️  Missing data: {', '.join(missing)} — reliability reduced")
+        if opec_flag:
+            day_count = opec_days if opec_days and opec_days >= 0 else abs(opec_days or 0)
+            lines.append(f"⚠️  OPEC event window: {day_count} day(s)")
 
-    # ── Disclaimer ──
-    lines.append("")
-    lines.append("⚠️ Research signal only — not trading advice.")
+    lines.extend([
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "⚠️  NOT financial advice.",
+        "   Always do your own research.",
+        "   Past signals don't guarantee future accuracy.",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ])
 
     return '\n'.join(lines)
 
