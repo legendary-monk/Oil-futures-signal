@@ -188,7 +188,7 @@ def _format_message(r: Dict[str, Any]) -> str:
 
     lines = [
         "━━━━━━━━━━━━━━━━━━━━━━",
-        "📊 MARKET SIGNAL REPORT",
+        "📊 OIL MARKET SIGNAL REPORT",
         "━━━━━━━━━━━━━━━━━━━━━━",
         f"🕐 {time_str}",
         "",
@@ -313,10 +313,14 @@ def send_signal(signal_result: Dict[str, Any]) -> bool:
             logger.error("No Telegram chat IDs configured")
             return False
 
+        # Send once per unique chat ID (preserve input order).
+        unique_chat_ids = list(dict.fromkeys(chat_ids))
+        if len(unique_chat_ids) < len(chat_ids):
+            logger.warning("Duplicate Telegram chat IDs detected; deduplicating before send")
+
         sent_count = 0
         failed_ids = []
-
-        for chat_id in chat_ids:
+        for chat_id in unique_chat_ids:
             ok = send_telegram_message(message, chat_id=chat_id)
             if ok:
                 sent_count += 1
