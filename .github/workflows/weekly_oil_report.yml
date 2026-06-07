@@ -1,12 +1,13 @@
-name: Daily Oil Signal
+name: Weekly Oil Report
 
 on:
   schedule:
-    - cron: '30 3 * * *'
+    # Sunday 04:00 UTC = 09:30 IST. Sends one weekly report instead of daily automation.
+    - cron: '0 4 * * 0'
   workflow_dispatch:
 
 jobs:
-  run-signal:
+  weekly-report:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -27,17 +28,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily pipeline
-        run: python main.py run
+      - name: Run weekly oil report pipeline
+        run: python main.py weekly
 
-      - name: Generate performance report
+      - name: Generate weekly performance report
         run: python main.py performance
 
-      - name: Upload artifacts
+      - name: Upload weekly artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: oil-signal-artifacts
+          name: weekly-oil-report-artifacts
           path: |
             oil_signal.log
             oil_predictions.csv

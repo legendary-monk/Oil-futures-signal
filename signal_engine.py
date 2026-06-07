@@ -179,6 +179,46 @@ def _consensus_strength(factor_scores: Dict[str, float]) -> float:
     return round(same_sign_pairs / total_pairs if total_pairs else 0.0, 4)
 
 
+def _movement_direction(score: float) -> str:
+    if score > 0.08:
+        return "bullish"
+    if score < -0.08:
+        return "bearish"
+    return "mixed"
+
+
+def _select_movement_news(analyzed_articles: List[Dict]) -> List[Dict[str, Any]]:
+    """
+    Selects the news most likely to have moved oil during the weekly window.
+
+    This is an attribution heuristic, not proof of causality: articles are ranked by
+    absolute directional sentiment impact after source credibility, oil relevance,
+    and recency weighting have been applied.
+    """
+    movement_news = []
+    for article in analyzed_articles:
+        score = _safe(article.get('final_score'))
+        weight = _safe(article.get('effective_weight'), 0.0)
+        impact = score * weight
+        if abs(impact) < 0.02:
+            continue
+        movement_news.append({
+            'title': article.get('title', 'Untitled oil news'),
+            'published': article.get('published'),
+            'source': article.get('source', ''),
+            'link': article.get('link', ''),
+            'entities': article.get('entities', []),
+            'sentiment_label': article.get('sentiment_label', 'NEUTRAL'),
+            'direction': _movement_direction(score),
+            'sentiment_score': round(score, 4),
+            'effective_weight': round(weight, 4),
+            'movement_impact': round(impact, 4),
+        })
+
+    movement_news.sort(key=lambda item: abs(item['movement_impact']), reverse=True)
+    return movement_news[:config.TOP_MOVEMENT_NEWS_LIMIT]
+
+
 def _build_reasoning(
     signal: str,
     polymarket_score: float,
@@ -323,8 +363,9 @@ def generate_signal(
 
         pos_arts = sum(1 for a in analyzed_articles if a.get('sentiment_label') == 'POSITIVE')
         neg_arts = sum(1 for a in analyzed_articles if a.get('sentiment_label') == 'NEGATIVE')
+        movement_news = _select_movement_news(analyzed_articles)
 
-        logger.info("OIL SIGNAL: %s | confidence=%.4f | raw=%.4f | "
+        logger.info("WEEKLY OIL REPORT: %s | confidence=%.4f | raw=%.4f | "
                     "poly=%.4f | sent=%.4f | market=%s | OPEC=%s",
                     signal, confidence, raw_score,
                     polymarket_score, sentiment_score,
@@ -367,6 +408,7 @@ def generate_signal(
             'article_count': len(analyzed_articles),
             'positive_articles': pos_arts,
             'negative_articles': neg_arts,
+            'movement_news': movement_news,
 
             # Polymarket
             'polymarket_market_count': len(polymarket_markets),
@@ -400,6 +442,7 @@ def generate_signal(
             'wti_price': None, 'brent_price': None, 'brent_wti_spread': None,
             'price_1d': None, 'price_5d': None, 'price_10d': None,
             'article_count': 0, 'positive_articles': 0, 'negative_articles': 0,
+            'movement_news': [],
             'polymarket_market_count': 0, 'polymarket_markets': [],
             'opec_days': None, 'opec_uncertainty': False,
             'reasons': [f"Signal engine error: {str(e)[:100]}"],

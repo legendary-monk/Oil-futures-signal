@@ -188,7 +188,7 @@ def _format_message(r: Dict[str, Any]) -> str:
 
     lines = [
         "━━━━━━━━━━━━━━━━━━━━━━",
-        "📊 OIL MARKET SIGNAL REPORT",
+        "📊 WEEKLY OIL MARKET REPORT",
         "━━━━━━━━━━━━━━━━━━━━━━",
         f"🕐 {time_str}",
         "",
@@ -214,9 +214,20 @@ def _format_message(r: Dict[str, Any]) -> str:
         "📰 NEWS SENTIMENT",
         f"   Overall: {headline}",
         f"   Score: {sent_score:+.3f} (range: -1 to +1)",
-        f"   Articles: {articles} analyzed",
+        f"   Articles: {articles} analyzed (7-day window)",
         f"   Positive: {pos_arts} | Negative: {neg_arts}",
     ]
+
+    movement_news = r.get('movement_news', [])
+    if movement_news:
+        lines.extend(["", "🧨 NEWS THAT LIKELY MOVED OIL MOST"])
+        for item in movement_news[:5]:
+            title = _shorten(str(item.get('title', 'Untitled oil news')), 82)
+            direction = str(item.get('direction', 'mixed')).upper()
+            impact = float(item.get('movement_impact', 0.0) or 0.0)
+            entities = item.get('entities') or []
+            entity_text = f" | {', '.join(entities[:3])}" if entities else ""
+            lines.append(f"   • {direction} {impact:+.3f}: {title}{entity_text}")
 
     if reasons:
         lines.extend(["", "🔍 KEY FACTORS"])
@@ -358,7 +369,7 @@ def test_connection() -> bool:
     msg = (
         "✅ Oil Signal System — Connection OK\n"
         f"Time: {datetime.now(UTC).strftime('%d %b %Y %H:%M UTC')}\n\n"
-        "Bot configured. Daily oil signals will arrive here."
+        "Bot configured. Weekly oil reports will arrive here."
     )
     success = send_telegram_message(msg)
     if success:

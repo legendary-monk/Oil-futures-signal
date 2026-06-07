@@ -1,4 +1,4 @@
-"""Streamlit dashboard for oil signal performance analytics."""
+"""Streamlit dashboard for weekly oil report performance analytics."""
 
 from pathlib import Path
 
@@ -7,8 +7,8 @@ import streamlit as st
 
 import config
 
-st.set_page_config(page_title="Oil Signal Dashboard", layout="wide")
-st.title("🛢 Oil Signal Dashboard")
+st.set_page_config(page_title="Weekly Oil Report Dashboard", layout="wide")
+st.title("🛢 Weekly Oil Report Dashboard")
 
 csv_path = Path(config.PREDICTIONS_FILE)
 if not csv_path.exists():
@@ -80,7 +80,7 @@ resolved_5d = fdf[fdf.get("outcome_5d", "").isin(["CORRECT", "INCORRECT"])] if "
 acc_1d = (resolved_1d["outcome_1d"].eq("CORRECT").mean() * 100) if not resolved_1d.empty else float("nan")
 acc_5d = (resolved_5d["outcome_5d"].eq("CORRECT").mean() * 100) if not resolved_5d.empty else float("nan")
 
-c1.metric("Rows", len(fdf))
+c1.metric("Weekly reports", len(fdf))
 c2.metric("1D accuracy", f"{acc_1d:.1f}%" if pd.notna(acc_1d) else "N/A")
 c3.metric("5D accuracy", f"{acc_5d:.1f}%" if pd.notna(acc_5d) else "N/A")
 c4.metric("Directional signals", int(fdf["signal"].isin(["BULLISH", "BEARISH"]).sum()) if "signal" in fdf.columns else 0)
@@ -119,5 +119,10 @@ if "change_pct_1d" in fdf.columns and factor_cols:
     corr_df = fdf[factor_cols + ["change_pct_1d"]].corr(numeric_only=True)
     st.dataframe(corr_df[["change_pct_1d"]].sort_values("change_pct_1d", ascending=False))
 
-st.subheader("Recent rows")
+if "movement_news" in fdf.columns:
+    st.subheader("Recent movement-news drivers")
+    movement_cols = [c for c in ["date", "signal", "movement_news"] if c in fdf.columns]
+    st.dataframe(fdf.sort_values("date", ascending=False)[movement_cols].head(10), use_container_width=True)
+
+st.subheader("Recent weekly reports")
 st.dataframe(fdf.sort_values("date", ascending=False).head(30), use_container_width=True)

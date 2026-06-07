@@ -83,8 +83,9 @@ RSS_FEEDS = [
     "https://www.rigzone.com/news/rss/rigzone_latest.aspx",
 ]
 
-MAX_ARTICLES = 60          # More than Nifty system — oil news is global
-MAX_ARTICLE_AGE_HOURS = 36 # WHY 36: OPEC decisions affect oil for 2+ days
+MAX_ARTICLES = 100          # Weekly report needs enough global oil news coverage
+MAX_ARTICLE_AGE_HOURS = 168 # 7 days: weekly report window
+TOP_MOVEMENT_NEWS_LIMIT = 5 # News items most likely to have driven weekly oil moves
 
 # ─────────────────────────────────────────────
 # SIGNAL ENGINE WEIGHTS

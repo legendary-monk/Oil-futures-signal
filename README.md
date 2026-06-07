@@ -1,15 +1,15 @@
 # Oil Futures Signal
 
-A Python pipeline that produces a **daily directional oil signal** (`BULLISH`, `BEARISH`, `NEUTRAL`) by combining:
+A Python pipeline that produces a **weekly directional oil report** (`BULLISH`, `BEARISH`, `NEUTRAL`) by combining:
 
 1. Multi-instrument market data (WTI, Brent, USD, XLE, Gold, NatGas)
 2. Polymarket prediction-market probabilities
-3. Oil-focused RSS news sentiment
+3. Oil-focused RSS news sentiment over the latest 7-day window
 4. Technical and macro feature engineering
 5. Consensus-aware score fusion (confidence rises only when factors align)
 6. Multi-model quant stack spanning no-arbitrage, stochastic, term-structure, risk, and ML math
 
-The output is sent to Telegram and logged for performance tracking in CSV.
+The weekly output is sent to Telegram and logged for performance tracking in CSV. The report also highlights the news items most likely to have caused the largest oil-market moves, ranked by directional sentiment impact, source credibility, oil relevance, and recency.
 
 ---
 
@@ -61,19 +61,19 @@ Review `config.py` for:
 
 - model weights (`WEIGHT_POLYMARKET`, `WEIGHT_SENTIMENT`, etc.)
 - thresholds (`BULLISH_THRESHOLD`, `BEARISH_THRESHOLD`)
-- feed list and network retry settings
+- feed list, weekly news window, movement-news ranking limit, and network retry settings
 - OPEC uncertainty window + calendar path
 
 ---
 
 ## Run modes
 
-### Full pipeline
+### Weekly report pipeline
 
 ```bash
 python main.py
 # or
-python main.py run
+python main.py weekly
 ```
 
 ### Telegram connection test
@@ -82,7 +82,7 @@ python main.py run
 python main.py test
 ```
 
-### Performance report from saved predictions
+### Weekly performance report from saved predictions
 
 ```bash
 python main.py performance
@@ -94,7 +94,7 @@ python main.py performance
 python main.py backtest
 ```
 
-Outputs `backtest_results.csv` with daily signal, position, realized next-day WTI return,
+Outputs `backtest_results.csv` with historical signal, position, realized next-day WTI return,
 strategy return (after transaction cost), turnover, and confidence.
 
 ---
@@ -113,6 +113,7 @@ A single signal includes fields like:
 - feature context (`vol_regime`, `rsi`, `atr_pct`, `opec_uncertainty`)
 - model quality context (`factor_participation`, `consensus_strength`)
 - quant context (`quant_score`, `quant_diagnostics`)
+- movement-news context (`movement_news`) for the items most likely to have driven weekly price action
 
 ---
 
@@ -163,7 +164,7 @@ Example format:
 
 ## Local dashboard (free)
 
-A Streamlit dashboard is included for quick analytics from `oil_predictions.csv`.
+A Streamlit dashboard is included for quick analytics from weekly-run entries in `oil_predictions.csv`.
 
 Run:
 
@@ -173,7 +174,7 @@ streamlit run dashboard.py
 
 Dashboard includes:
 
-- rolling 1d/5d directional accuracy
+- rolling weekly-run 1d/5d directional accuracy
 - confidence-band accuracy
 - signal distribution
 - factor-to-outcome correlations
@@ -183,12 +184,12 @@ Dashboard includes:
 
 ## Automation
 
-A GitHub Actions workflow runs daily and uploads artifacts:
+A single GitHub Actions workflow runs weekly and uploads artifacts:
 
 - `oil_signal.log`
 - `oil_predictions.csv`
 
-Workflow file: `.github/workflows/daily_signal.yml`
+Workflow file: `.github/workflows/weekly_oil_report.yml`
 
 Configure repository secrets:
 
