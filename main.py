@@ -1,17 +1,18 @@
 """
-main.py — Oil Signal Pipeline Orchestrator
+main.py — Weekly Oil Report Pipeline Orchestrator
 ==========================================
 Five-stage pipeline:
   1. Market data (WTI, Brent, USD, XLE, Gold, NatGas)
   2. Polymarket prediction markets
   3. News sentiment (oil-filtered)
   4. Feature engineering
-  5. Signal generation → Telegram + validator
+  5. Weekly signal report generation → Telegram + validator
 
 Usage:
-  python main.py          → full pipeline
+  python main.py          → weekly report pipeline
+  python main.py weekly   → weekly report pipeline
   python main.py test     → Telegram connection test
-  python main.py performance → accuracy report
+  python main.py performance → weekly accuracy report
 """
 
 import sys
@@ -42,7 +43,7 @@ UTC = timezone.utc
 def run_pipeline() -> bool:
     start = datetime.now(UTC)
     logger.info("=" * 65)
-    logger.info("OIL SIGNAL SYSTEM — Run started %s",
+    logger.info("WEEKLY OIL REPORT SYSTEM — Run started %s",
                 start.strftime('%Y-%m-%d %H:%M:%S UTC'))
     logger.info("=" * 65)
 
@@ -147,6 +148,7 @@ def run_pipeline() -> bool:
             'wti_price': None, 'brent_price': None, 'brent_wti_spread': None,
             'price_1d': None, 'price_5d': None, 'price_10d': None,
             'article_count': len(analyzed_articles), 'positive_articles': 0, 'negative_articles': 0,
+            'movement_news': [],
             'polymarket_market_count': len(polymarket_markets), 'polymarket_markets': [],
             'opec_days': None, 'opec_uncertainty': False,
             'reasons': ["Emergency fallback — signal engine error"],
@@ -180,7 +182,7 @@ def run_pipeline() -> bool:
 
 
 if __name__ == "__main__":
-    mode = sys.argv[1].lower() if len(sys.argv) > 1 else 'run'
+    mode = sys.argv[1].lower() if len(sys.argv) > 1 else 'weekly'
 
     if mode == 'test':
         errors = config.validate_config()
@@ -203,7 +205,7 @@ if __name__ == "__main__":
             print("   Check network access to Yahoo Finance or adjust date range/config.")
             sys.exit(1)
 
-    elif mode == 'run':
+    elif mode in ('run', 'weekly'):
         try:
             success = run_pipeline()
             sys.exit(0 if success else 1)
@@ -220,5 +222,5 @@ if __name__ == "__main__":
 
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: python main.py [run|test|performance|backtest]")
+        print("Usage: python main.py [weekly|run|test|performance|backtest]")
         sys.exit(1)

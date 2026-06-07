@@ -5,8 +5,8 @@ Enhancements over Nifty version:
 1. Tracks both WTI price and signal accuracy
 2. Polymarket market IDs archived — lets us verify if Polymarket
    was actually right on specific markets (manual audit trail)
-3. Multi-timeframe accuracy: 1-day, 3-day, 5-day outcome tracking
-4. Confidence-stratified accuracy reporting
+3. Multi-timeframe accuracy: 1-day, 3-day, 5-day outcome tracking for weekly runs
+4. Confidence-stratified weekly report accuracy
 5. Factor attribution: which of the 4 factors was most predictive?
 """
 
@@ -34,6 +34,7 @@ CSV_COLUMNS = [
     'wti_price', 'brent_price', 'brent_wti_spread',
     'polymarket_market_count',
     'article_count',
+    'movement_news',
     'opec_uncertainty',
     # Outcome fields (filled D+1, D+3, D+5)
     'wti_next1', 'change_pct_1d', 'outcome_1d',
@@ -54,6 +55,23 @@ def _ensure_csv():
             logger.info("Created predictions file: %s", config.PREDICTIONS_FILE)
         except IOError as e:
             logger.error("Cannot create predictions file: %s", e)
+        return
+
+    try:
+        with open(config.PREDICTIONS_FILE, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            existing_columns = reader.fieldnames or []
+            rows = [dict(row) for row in reader]
+        missing_columns = [col for col in CSV_COLUMNS if col not in existing_columns]
+        if not missing_columns:
+            return
+        for row in rows:
+            for col in missing_columns:
+                row[col] = ''
+        _write_all(rows)
+        logger.info("Migrated predictions file with columns: %s", ', '.join(missing_columns))
+    except IOError as e:
+        logger.error("Cannot migrate predictions file: %s", e)
 
 
 def save_prediction(signal_result: Dict[str, Any]) -> bool:
@@ -88,6 +106,7 @@ def save_prediction(signal_result: Dict[str, Any]) -> bool:
         'brent_wti_spread': round(signal_result.get('brent_wti_spread', 0) or 0, 2),
         'polymarket_market_count': signal_result.get('polymarket_market_count', 0),
         'article_count': signal_result.get('article_count', 0),
+        'movement_news': json.dumps([n.get('title', '') for n in signal_result.get('movement_news', [])[:5]]),
         'opec_uncertainty': int(signal_result.get('opec_uncertainty', False)),
         # Outcomes — filled later
         'wti_next1': '', 'change_pct_1d': '', 'outcome_1d': 'PENDING',
@@ -289,12 +308,12 @@ def print_performance_report():
         return
 
     print("\n" + "=" * 55)
-    print("🛢  OIL SIGNAL SYSTEM — PERFORMANCE REPORT")
+    print("🛢  WEEKLY OIL REPORT — PERFORMANCE REPORT")
     print("=" * 55)
     print(f"\nTotal saved:             {m['total_saved']}")
     print(f"Total resolved (1d):     {m['total_resolved_1d']}")
     print(f"Pending:                 {m['pending_1d']}")
-    print(f"\n📈 1-DAY DIRECTIONAL ACCURACY")
+    print(f"\n📈 WEEKLY-RUN DIRECTIONAL ACCURACY")
     print(f"   Overall:              {m['overall_accuracy_1d_pct']}%")
     print(f"   5-day accuracy:       {m.get('accuracy_5d_pct', 'N/A')}%")
     print(f"   Excl. OPEC windows:   {m.get('accuracy_excl_opec_pct', 'N/A')}%")

@@ -144,6 +144,7 @@ def _preprocess_text(text: str) -> str:
 def _parse_entry(entry, source_url: str) -> Optional[Dict]:
     """Parses a feedparser entry into a clean article dict."""
     title = getattr(entry, 'title', '').strip()
+    link = getattr(entry, 'link', '').strip()
     summary = getattr(entry, 'summary', '').strip()
     content = ''
     if hasattr(entry, 'content') and entry.content:
@@ -179,6 +180,7 @@ def _parse_entry(entry, source_url: str) -> Optional[Dict]:
         'text': clean_text,
         'published': published,
         'source': source_url,
+        'link': link,
         'relevance_score': relevance_score,
         'source_weight': source_weight,
         'entities': entities,
